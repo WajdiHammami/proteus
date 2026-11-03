@@ -15,7 +15,13 @@ class Source:
         self.status = SourceStatus.CRAWLING
 
     def mark_done(self):
+        self._require_crawling("finish")
         self.status = SourceStatus.DONE
 
     def mark_failed(self):
+        self._require_crawling("fail")
         self.status = SourceStatus.FAILED
+
+    def _require_crawling(self, action: str):
+        if self.status != SourceStatus.CRAWLING:
+            raise ValueError(f"Cannot {action} source with status {self.status}")

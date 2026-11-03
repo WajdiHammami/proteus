@@ -24,14 +24,21 @@ class PipelineRun:
         self.stages.append(result)
 
     def complete(self):
+        self._require_running("complete")
         self.status = PipelineStatus.DONE
         self.finished_at = datetime.now()
 
     def partial(self):
+        self._require_running("mark partial")
         self.status = PipelineStatus.PARTIAL
         self.finished_at = datetime.now()
 
     def fail(self, error: str):
+        self._require_running("fail")
         self.status = PipelineStatus.FAILED
         self.error = error
         self.finished_at = datetime.now()
+
+    def _require_running(self, action: str):
+        if self.status != PipelineStatus.RUNNING:
+            raise ValueError(f"Cannot {action} pipeline with status {self.status}")
