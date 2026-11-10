@@ -1,8 +1,8 @@
 # infrastructure/yaml_loader.py
 import yaml
 import uuid
-from src.domain import Schema
-from src.domain.value_objects import SchemaField, FieldType
+from src.adapters.models import Schema
+from src.adapters.models.value_objects import SchemaField, FieldType
 
 
 def load_schema_from_yaml(path: str) -> Schema:

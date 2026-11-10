@@ -12,6 +12,7 @@ class SourceType(Enum):
     URL = "url"
     FILE = "file"
     SITEMAP = "sitemap"
+    PDF = "pdf"  # remote URL or local path pointing to a PDF
 
 
 

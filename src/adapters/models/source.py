@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from src.domain.value_objects import SourceStatus, SourceType
+from src.adapters.models.value_objects import SourceStatus, SourceType
 
 
 @dataclass
@@ -8,6 +8,7 @@ class Source:
     url: str
     type: SourceType = SourceType.URL
     status: SourceStatus = SourceStatus.PENDING
+    parent_id: str | None = None  # id of the Source this one was discovered from (e.g. a sitemap)
 
     def mark_crawling(self):
         if self.status != SourceStatus.PENDING:

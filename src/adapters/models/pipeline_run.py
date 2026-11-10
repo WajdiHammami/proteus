@@ -1,4 +1,4 @@
-from src.domain.value_objects import PipelineStatus, StageResult
+from src.adapters.models.value_objects import PipelineStatus, StageResult
 from dataclasses import dataclass, field
 from datetime import datetime
 

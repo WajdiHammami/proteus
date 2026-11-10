@@ -1,2 +1,9 @@
 pytest
 pyyaml
+pydantic
+requests
+
+
+# scrapers
+trafilatura
+pypdf
