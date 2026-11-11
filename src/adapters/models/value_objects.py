@@ -51,3 +51,4 @@ class SchemaField:
     required: bool = True
     vector: bool = False        # should this field be embedded?
     description: str | None = None   # helps LLM understand what to extract
+    source: str | None = None        # where the value comes from: "snippet.code", "document.url", "llm", ...

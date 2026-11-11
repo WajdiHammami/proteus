@@ -12,7 +12,7 @@ from trafilatura.utils import load_html
 
 from src.adapters.models.normalized_document import NormalizedDocument, TextFormat
 from src.adapters.models.raw_document import RawDocument
-from src.adapters.normalizers.code_fence import fence_code
+from src.adapters.normalizers.code_fence import fence_code, normalize_language
 from src.adapters.normalizers.text_cleanup import clean_text
 from src.ports.normalization_port import NormalizationPort, UnsupportedDocumentError
 
@@ -252,10 +252,6 @@ _SOURCECODE_CLASS = re.compile(r"(?:^|\s)sourceCode\s+([A-Za-z0-9_+#-]+)")
 _BARE_LANGUAGE_CLASSES = {
     "cpp": "cpp", "c++": "cpp", "cxx": "cpp", "cc": "cpp", "hpp": "cpp", "c": "c",
 }
-_LANGUAGE_ALIASES = {
-    "c++": "cpp", "cxx": "cpp", "cc": "cpp", "hpp": "cpp", "h++": "cpp", "cplusplus": "cpp", "objective-c++": "objcpp",
-}
-_NOT_LANGUAGES = frozenset({"none", "text", "plain", "plaintext", "txt", "nohighlight", "default"})
 _LANGUAGE_SEARCH_DEPTH = 3  # ancestors of <pre> to look at (Sphinx puts it on the grandparent)
 
 
@@ -308,13 +304,13 @@ def _code_language(pre: HtmlElement) -> str | None:
 
     for element in candidates:
         for attribute in ("data-lang", "data-language"):
-            language = _clean_language(element.get(attribute))
+            language = normalize_language(element.get(attribute))
             if language:
                 return language
         classes = element.get("class") or ""
         for pattern in (_LANGUAGE_CLASS, _SOURCECODE_CLASS):
             for match in pattern.finditer(classes):
-                language = _clean_language(match.group(1))
+                language = normalize_language(match.group(1))
                 if language:
                     return language
         for name in classes.split():
@@ -322,13 +318,6 @@ def _code_language(pre: HtmlElement) -> str | None:
             if bare:
                 return bare
     return None
-
-
-def _clean_language(value: str | None) -> str | None:
-    value = (value or "").strip().lower()
-    if not value or value in _NOT_LANGUAGES or not re.fullmatch(r"[a-z0-9_+#-]{1,30}", value):
-        return None
-    return _LANGUAGE_ALIASES.get(value, value)
 
 
 def _restore_code_blocks(text: str, blocks: dict[str, tuple[str, str | None]]) -> str:

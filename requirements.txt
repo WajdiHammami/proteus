@@ -1,9 +1,24 @@
-pytest
-pyyaml
-pydantic
-requests
+# Versions: lower bound = version the test suite was run with, upper bound = next
+# major version (breaking changes). Update the bounds after testing a new major.
 
+# core
+pydantic>=2.14.3,<3        # TypeAdapter on dataclasses (schema validation)
+pyyaml>=6.0.3,<7           # schema files (safe loader only)
+requests>=2.34.2,<3        # PDF downloads
 
-# scrapers
-trafilatura
-pypdf
+# scrapers / normalizers
+trafilatura>=2.3.1,<3
+lxml>=6.1.3,<7             # used directly by the HTML normalizer
+pypdf>=7.0.1,<8
+
+# extractors
+tree-sitter>=0.26.1,<0.27  # 0.x: minor versions may change the API
+tree-sitter-cpp>=0.23.4,<0.24
+
+# llm (provider adapters live behind src/ports/llm_port.py)
+openai>=3.49.0,<4          # Azure adapter only
+python-dotenv>=1.2.4,<2    # azure.env
+tiktoken>=0.14.0,<1        # token counts for cost estimates
+
+# tests
+pytest>=9.2.0,<10

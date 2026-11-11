@@ -1,0 +1,53 @@
+# One record per C/C++ snippet.
+#
+# `source` says where a value comes from:
+#   snippet.<code|language|index|heading|context|line_count|includes|functions|classes|parse_score|language_declared>
+#   document.<url|title|author|date|source_id|document_id>
+#   llm  -> filled by a language model (FieldFillerPort)
+# Without `source`, a field whose name is one of the keys above maps to it; any other field is an llm field.
+# `vector: true` marks fields to embed in a vector store.
+
+name: cpp_snippet
+description: A C/C++ code snippet with the context that explains it.
+fields:
+  - name: code
+    type: str
+    vector: true
+  - name: language
+    type: str
+  - name: url
+    type: str
+    description: Page or file the snippet comes from.
+  - name: title
+    type: str
+    required: false
+    source: document.title
+  - name: heading
+    type: str
+    required: false
+  - name: context
+    type: str
+    required: false
+    description: The paragraph right before the snippet.
+  - name: includes
+    type: list
+    required: false
+  - name: functions
+    type: list
+    required: false
+  - name: classes
+    type: list
+    required: false
+  - name: line_count
+    type: int
+  - name: description
+    type: str
+    required: false
+    vector: true
+    source: llm
+    description: One sentence on what the snippet does.
+  - name: concepts
+    type: list
+    required: false
+    source: llm
+    description: C++ concepts the snippet illustrates (e.g. RAII, move semantics, templates).

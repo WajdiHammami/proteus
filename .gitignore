@@ -1,2 +1,7 @@
 .env/
 __pycache__/
+# credentials (azure.env.example is the committed template)
+*.env
+!*.env.example
+.env.*
+!.env.example
