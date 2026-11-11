@@ -23,6 +23,11 @@ class Source:
         self._require_crawling("fail")
         self.status = SourceStatus.FAILED
 
+    def release(self):
+        """Gives the source back (CRAWLING -> PENDING), e.g. when it was routed to the wrong scraper."""
+        self._require_crawling("release")
+        self.status = SourceStatus.PENDING
+
     def _require_crawling(self, action: str):
         if self.status != SourceStatus.CRAWLING:
             raise ValueError(f"Cannot {action} source with status {self.status}")

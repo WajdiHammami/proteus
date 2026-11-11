@@ -407,3 +407,41 @@ class TestLayoutMode:
         layout = PdfScraperAdapter().fetch(make_source(path, SourceType.FILE))
         plain = PdfScraperAdapter(layout=False).fetch(make_source(path, SourceType.FILE))
         assert layout.metadata["text_layer"]["chars_per_page"] == plain.metadata["text_layer"]["chars_per_page"]
+
+
+# --------------------------------------------------------------------------- #
+# Dispatcher hooks: supports() and fetch_payload()
+# --------------------------------------------------------------------------- #
+
+class TestSupports:
+    @pytest.mark.parametrize("url, source_type, expected", [
+        ("https://example.com/a.pdf", SourceType.PDF, True),
+        ("/tmp/a.pdf", SourceType.PDF, True),
+        ("/tmp/a.pdf", SourceType.FILE, True),
+        ("/tmp/A.PDF", SourceType.FILE, True),
+        ("/tmp/a.html", SourceType.FILE, False),
+        ("https://example.com/page", SourceType.URL, False),  # reached via re-routing only
+        ("https://example.com/sitemap.xml", SourceType.SITEMAP, False),
+    ])
+    def test_supports(self, make_source, url, source_type, expected):
+        assert PdfScraperAdapter().supports(make_source(url, source_type)) is expected
+
+
+class TestFetchPayload:
+    def test_uses_given_bytes_without_downloading(self, make_source, fake_get):
+        calls = fake_get(FakeResponse(b"should not be used"))
+        source = make_source("https://example.com/download?id=42", SourceType.PDF)
+
+        doc = PdfScraperAdapter().fetch_payload(source, build_pdf([{"text": "int main() {}"}]))
+
+        assert calls == []
+        assert "int main() {}" in doc.content
+        assert doc.metadata["url"] == "https://example.com/download?id=42"
+        assert doc.metadata["page_count"] == 1
+        assert source.status == SourceStatus.DONE
+
+    def test_non_pdf_payload_marks_failed(self, make_source):
+        source = make_source("https://example.com/x", SourceType.PDF)
+        with pytest.raises(ValueError, match="does not look like a PDF"):
+            PdfScraperAdapter().fetch_payload(source, b"<html></html>")
+        assert source.status == SourceStatus.FAILED

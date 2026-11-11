@@ -55,12 +55,30 @@ class PdfScraperAdapter(ScraperPort):
         self.max_garbled_ratio = max_garbled_ratio
         self.layout = layout
 
+    def supports(self, source: Source) -> bool:
+        # Plain URL sources are web pages by default; a URL that serves a PDF reaches this
+        # adapter through the dispatcher's content-mismatch re-routing (fetch_payload).
+        if source.type == SourceType.PDF:
+            return True
+        return source.type == SourceType.FILE and Path(source.url).suffix.lower() == ".pdf"
+
     def fetch(self, source: Source) -> RawDocument:
+        return self._fetch(source, payload=None)
+
+    def fetch_payload(self, source: Source, payload: bytes) -> RawDocument:
+        """Builds the document from PDF bytes another scraper already downloaded."""
+        return self._fetch(source, payload=payload)
+
+    def _fetch(self, source: Source, payload: bytes | None) -> RawDocument:
         source.mark_crawling()
 
         try:
             is_remote = urlparse(source.url).scheme in ("http", "https")
-            if source.type == SourceType.URL or (source.type == SourceType.PDF and is_remote):
+            if payload is not None:
+                self._ensure_pdf(payload, source.url)
+                pdf_bytes = payload
+                location_meta = {"url": source.url} if is_remote else {"path": source.url}
+            elif source.type == SourceType.URL or (source.type == SourceType.PDF and is_remote):
                 pdf_bytes = self._download_pdf(source.url)
                 location_meta = {"url": source.url}
             elif source.type in (SourceType.FILE, SourceType.PDF):

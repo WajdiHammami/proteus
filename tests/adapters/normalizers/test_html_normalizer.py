@@ -481,7 +481,7 @@ CPP_EXPECTED = [
 class TestCppCode:
     def test_pre_code_block_preserved_exactly(self, normalizer):
         content = content_of(normalizer, f'<pre><code class="language-cpp">{CPP_ESCAPED}</code></pre>')
-        assert "```\n" + "\n".join(CPP_EXPECTED) + "\n```" in content
+        assert "```cpp\n" + "\n".join(CPP_EXPECTED) + "\n```" in content
 
     def test_no_markdown_escaping_inside_code(self, normalizer):
         content = content_of(normalizer, f"<pre><code>{CPP_ESCAPED}</code></pre>")
@@ -564,3 +564,94 @@ class TestCodeTables:
         assert _unwrap_code_tables(root) == 1
         assert len(root.xpath("//table")) == 1
         assert root.xpath("//pre/code")[0].text == "a;"
+
+
+class TestCodeBlockFidelity:
+    """trafilatura alone drops blank lines, <br> breaks and the language; we restore them."""
+
+    def test_blank_lines_inside_code_kept(self, normalizer):
+        code = "#include &lt;vector&gt;\n\nint main() {\n    int x = 1;\n\n    return x;\n}"
+        content = content_of(normalizer, f"<pre><code>{code}</code></pre>")
+        assert "```\n#include <vector>\n\nint main() {\n    int x = 1;\n\n    return x;\n}\n```" in content
+
+    def test_br_line_breaks_kept(self, normalizer):
+        content = content_of(normalizer, "<pre><code>int a;<br>int b;<br><br>int c;</code></pre>")
+        assert "int a;\nint b;\n\nint c;" in content
+
+    def test_crlf_and_surrounding_blank_lines(self, normalizer):
+        content = content_of(normalizer, "<pre><code>\n\r\nint a;\r\nint b;\r\n\r\n</code></pre>")
+        assert "```\nint a;\nint b;\n```" in content
+
+    @pytest.mark.parametrize("html, language", [
+        ('<pre><code class="language-cpp">int x;</code></pre>', "cpp"),
+        ('<pre><code class="hljs language-c++">int x;</code></pre>', "cpp"),
+        ('<pre class="prettyprint lang-cpp">int x;</pre>', "cpp"),
+        ('<pre class="brush: cpp; gutter: true">int x;</pre>', "cpp"),
+        ('<pre class="sourceCode cpp"><code class="sourceCode cpp">int x;</code></pre>', "cpp"),
+        ('<pre class="cpp geshi">int x;</pre>', "cpp"),
+        ('<pre><code class="hljs cpp">int x;</code></pre>', "cpp"),
+        ('<pre data-lang="C++">int x;</pre>', "cpp"),
+        ('<div class="highlight-cpp notranslate"><div class="highlight"><pre>int x;</pre></div></div>', "cpp"),
+        ('<pre><code class="language-c">int x;</code></pre>', "c"),
+        ('<pre><code class="language-bash">int x;</code></pre>', "bash"),
+        ('<pre><code class="language-cxx">int x;</code></pre>', "cpp"),
+    ])
+    def test_language_hint_kept(self, normalizer, html, language):
+        assert f"```{language}\nint x;\n```" in content_of(normalizer, html)
+
+    @pytest.mark.parametrize("html", [
+        "<pre><code>int x;</code></pre>",
+        '<pre><code class="language-none">int x;</code></pre>',
+        '<pre><code class="nohighlight">int x;</code></pre>',
+        '<pre class="highlight notranslate">int x;</pre>',   # bare classes are not languages
+        '<pre class="python">int x;</pre>',                 # only C/C++ bare classes are trusted
+    ])
+    def test_no_language_when_unknown(self, normalizer, html):
+        assert "```\nint x;\n```" in content_of(normalizer, html)
+
+    def test_several_blocks_keep_order_and_languages(self, normalizer):
+        body = ('<pre><code class="language-cpp">int a;</code></pre><p>Then run it from the shell like this:</p>'
+                '<pre><code class="language-bash">g++ a.cpp</code></pre>')
+        content = content_of(normalizer, body)
+        assert content.index("```cpp\nint a;\n```") < content.index("```bash\ng++ a.cpp\n```")
+
+    def test_nested_pre_is_one_block(self, normalizer):
+        content = content_of(normalizer, "<pre>int a;\n<pre>int b;</pre></pre>")
+        assert content.count("```") == 2
+
+    def test_pre_in_table_cell_left_to_table(self, normalizer):
+        body = ("<table><tr><th>Method</th><th>Example</th></tr>"
+                "<tr><td>size</td><td><pre>v.size()</pre></td></tr></table>")
+        content = content_of(normalizer, body)
+        assert "| size | v.size() |" in content
+        assert "```" not in content
+
+    def test_unwrapped_code_table_gets_language(self, normalizer):
+        body = ('<div class="highlight-cpp"><table class="highlighttable"><tr><td class="linenos"><pre>1\n2</pre></td>'
+                '<td class="code"><pre>int x;\n\nreturn x;</pre></td></tr></table></div>')
+        assert "```cpp\nint x;\n\nreturn x;\n```" in content_of(normalizer, body)
+
+    def test_code_with_backticks_gets_longer_fence(self, normalizer):
+        content = content_of(normalizer, '<pre><code class="language-markdown">```cpp\nx\n```</code></pre>')
+        assert "````markdown\n```cpp\nx\n```\n````" in content
+
+    def test_full_text_fallback_also_fences_code(self, monkeypatch):
+        monkeypatch.setattr(html_normalizer.trafilatura, "extract", lambda html, **kwargs: None)
+        normalizer = TrafilaturaHtmlNormalizer(min_chars=1)
+        html = '<html><body><pre><code class="language-cpp">int a;\n\nint b;</code></pre></body></html>'
+        doc = normalizer.normalize(raw_html(html))
+        assert doc.metadata["extraction_mode"] == "full_text"
+        assert "```cpp\nint a;\n\nint b;\n```" in doc.content
+
+    @pytest.mark.parametrize("body", [
+        '<pre><code class="language-cpp">int x;</code></pre>',
+        "<nav><pre>menu</pre></nav>",
+    ])
+    def test_placeholders_never_leak(self, normalizer, body):
+        assert "proteuscode" not in content_of(normalizer, body)
+
+    def test_raw_document_is_not_mutated(self, normalizer):
+        html = code_page('<pre><code class="language-cpp">int a;\n\nint b;</code></pre>')
+        document = raw_html(html)
+        normalizer.normalize(document)
+        assert document.content == html

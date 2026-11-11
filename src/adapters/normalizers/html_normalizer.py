@@ -12,6 +12,7 @@ from trafilatura.utils import load_html
 
 from src.adapters.models.normalized_document import NormalizedDocument, TextFormat
 from src.adapters.models.raw_document import RawDocument
+from src.adapters.normalizers.code_fence import fence_code
 from src.adapters.normalizers.text_cleanup import clean_text
 from src.ports.normalization_port import NormalizationPort, UnsupportedDocumentError
 
@@ -81,12 +82,18 @@ class TrafilaturaHtmlNormalizer(NormalizationPort):
         tree = load_html(raw.content) if raw.content.strip() else None
 
         html = raw.content
+        code_blocks: dict[str, tuple[str, str | None]] = {}
         if tree is not None:
             root = tree.getroottree().getroot()
-            if _unwrap_code_tables(root):
+            unwrapped = _unwrap_code_tables(root)
+            code_blocks = _protect_code_blocks(root)
+            if unwrapped or code_blocks:
                 html = lxml.html.tostring(root, encoding="unicode")
 
-        content, mode = self._extract_content(html, url) if tree is not None else ("", ExtractionMode.EMPTY)
+        if tree is not None:
+            content, mode = self._extract_content(html, url, code_blocks)
+        else:
+            content, mode = "", ExtractionMode.EMPTY
         if mode != ExtractionMode.MAIN:
             logger.info("HTML normalized with extraction_mode=%s: %s", mode, url or raw.id)
 
@@ -112,7 +119,9 @@ class TrafilaturaHtmlNormalizer(NormalizationPort):
     # Content
     # ------------------------------------------------------------------ #
 
-    def _extract_content(self, html: str, url: str | None) -> tuple[str, str]:
+    def _extract_content(
+        self, html: str, url: str | None, code_blocks: dict[str, tuple[str, str | None]]
+    ) -> tuple[str, str]:
         steps = [
             (ExtractionMode.MAIN, lambda: self._trafilatura(html, url, favor_precision=self.favor_precision)),
             (ExtractionMode.RECALL, lambda: self._trafilatura(html, url, favor_recall=True)),
@@ -122,7 +131,7 @@ class TrafilaturaHtmlNormalizer(NormalizationPort):
         best_text, best_mode = "", ExtractionMode.EMPTY
         for mode, step in steps:
             try:
-                text = clean_text(step() or "")
+                text = clean_text(_restore_code_blocks(step() or "", code_blocks))
             except Exception:
                 logger.debug("Extraction step %s failed", mode, exc_info=True)
                 continue
@@ -223,6 +232,125 @@ def _unwrap_code_tables(root: HtmlElement) -> int:
         table.getparent().replace(table, pre)
         replaced += 1
     return replaced
+
+
+# --------------------------------------------------------------------------- #
+# Code blocks
+# --------------------------------------------------------------------------- #
+#
+# trafilatura drops blank lines inside <pre>, ignores <br> line breaks and loses the
+# language class. So every <pre> is replaced by a unique placeholder before extraction;
+# trafilatura only decides *where* the code goes (or whether it is boilerplate), and the
+# original code is put back afterwards as a fenced block with its language.
+
+# class="language-cpp" (Prism, highlight.js, CommonMark renderers), "lang-cpp" (Google
+# prettify), "highlight-cpp" (Sphinx), "brush: cpp" (SyntaxHighlighter), "sourceCode cpp" (pandoc)
+_LANGUAGE_CLASS = re.compile(r"(?:^|\s)(?:language|lang|highlight|brush)[-:]\s*([A-Za-z0-9_+#-]+)")
+_SOURCECODE_CLASS = re.compile(r"(?:^|\s)sourceCode\s+([A-Za-z0-9_+#-]+)")
+# Bare class names are too ambiguous in general ("highlight", "notranslate", ...),
+# so only C/C++ ones are trusted (e.g. <pre class="cpp geshi">, class="hljs cpp").
+_BARE_LANGUAGE_CLASSES = {
+    "cpp": "cpp", "c++": "cpp", "cxx": "cpp", "cc": "cpp", "hpp": "cpp", "c": "c",
+}
+_LANGUAGE_ALIASES = {
+    "c++": "cpp", "cxx": "cpp", "cc": "cpp", "hpp": "cpp", "h++": "cpp", "cplusplus": "cpp", "objective-c++": "objcpp",
+}
+_NOT_LANGUAGES = frozenset({"none", "text", "plain", "plaintext", "txt", "nohighlight", "default"})
+_LANGUAGE_SEARCH_DEPTH = 3  # ancestors of <pre> to look at (Sphinx puts it on the grandparent)
+
+
+def _protect_code_blocks(root: HtmlElement) -> dict[str, tuple[str, str | None]]:
+    """
+    Replaces each outermost <pre> with <pre><code>PLACEHOLDER</code></pre> and returns
+    {placeholder: (code, language)}. A <pre> inside a table cell is left alone: a fenced
+    block would break the markdown table (code tables were already unwrapped).
+    """
+    blocks: dict[str, tuple[str, str | None]] = {}
+    nonce = uuid.uuid4().hex[:12]
+    for pre in root.xpath("//pre[not(ancestor::pre) and not(ancestor::td) and not(ancestor::th)]"):
+        parent = pre.getparent()
+        if parent is None:
+            continue
+        code = _pre_text(pre)
+        if not code.strip():
+            continue
+        # Letters and digits only: nothing for markdown conversion to escape.
+        placeholder = f"proteuscode{nonce}x{len(blocks)}z"
+        blocks[placeholder] = (code, _code_language(pre))
+
+        replacement = lxml.html.Element("pre")
+        lxml.html.etree.SubElement(replacement, "code").text = placeholder
+        replacement.tail = pre.tail
+        parent.replace(pre, replacement)
+    return blocks
+
+
+def _pre_text(pre: HtmlElement) -> str:
+    """Text of a <pre>, with <br> as line breaks; strips the blank lines around the code."""
+    pre = copy.deepcopy(pre)
+    for br in pre.iter("br"):
+        br.tail = "\n" + (br.tail or "")
+    text = pre.text_content().replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    return "\n".join(lines).rstrip()
+
+
+def _code_language(pre: HtmlElement) -> str | None:
+    candidates = [pre, *pre.xpath("./code")]
+    node = pre.getparent()
+    for _ in range(_LANGUAGE_SEARCH_DEPTH):
+        if node is None:
+            break
+        candidates.append(node)
+        node = node.getparent()
+
+    for element in candidates:
+        for attribute in ("data-lang", "data-language"):
+            language = _clean_language(element.get(attribute))
+            if language:
+                return language
+        classes = element.get("class") or ""
+        for pattern in (_LANGUAGE_CLASS, _SOURCECODE_CLASS):
+            for match in pattern.finditer(classes):
+                language = _clean_language(match.group(1))
+                if language:
+                    return language
+        for name in classes.split():
+            bare = _BARE_LANGUAGE_CLASSES.get(name.lower())
+            if bare:
+                return bare
+    return None
+
+
+def _clean_language(value: str | None) -> str | None:
+    value = (value or "").strip().lower()
+    if not value or value in _NOT_LANGUAGES or not re.fullmatch(r"[a-z0-9_+#-]{1,30}", value):
+        return None
+    return _LANGUAGE_ALIASES.get(value, value)
+
+
+def _restore_code_blocks(text: str, blocks: dict[str, tuple[str, str | None]]) -> str:
+    """Puts the protected code back, as fenced blocks, wherever the extractor kept it."""
+    if not blocks or "proteuscode" not in text:
+        return text
+
+    def fenced(placeholder: str) -> str:
+        code, language = blocks[placeholder]
+        return fence_code(code, language)
+
+    names = "|".join(re.escape(name) for name in blocks)
+    # Inside the fence trafilatura produced (markdown output) ...
+    text = re.sub(
+        rf"(?m)^[ \t]*(`{{3,}}|~{{3,}})[^\n]*\n[ \t]*({names})[ \t]*\n[ \t]*\1[ \t]*$",
+        lambda m: fenced(m.group(2)),
+        text,
+    )
+    # ... or bare, on its own line (html2txt) or inline.
+    text = re.sub(rf"(?m)^[ \t]*({names})[ \t]*$", lambda m: fenced(m.group(1)), text)
+    text = re.sub(rf"`?({names})`?", lambda m: "\n" + fenced(m.group(1)) + "\n", text)
+    return text
 
 
 def _base_mime(mime_type: str) -> str:

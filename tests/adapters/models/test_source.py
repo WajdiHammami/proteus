@@ -48,3 +48,20 @@ def test_cannot_crawl_twice(status):
     source = Source(id="1", url="u", status=status)
     with pytest.raises(ValueError):
         source.mark_crawling()
+
+
+def test_release_returns_crawling_source_to_pending():
+    source = Source(id="1", url="u")
+    source.mark_crawling()
+    source.release()
+    assert source.status == SourceStatus.PENDING
+    source.mark_crawling()  # can be picked up again
+    assert source.status == SourceStatus.CRAWLING
+
+
+@pytest.mark.parametrize("status", [SourceStatus.PENDING, SourceStatus.DONE, SourceStatus.FAILED])
+def test_release_requires_crawling(status):
+    source = Source(id="1", url="u", status=status)
+    with pytest.raises(ValueError):
+        source.release()
+    assert source.status == status

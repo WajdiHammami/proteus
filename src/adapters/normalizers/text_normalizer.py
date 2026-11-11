@@ -9,6 +9,7 @@ import yaml
 
 from src.adapters.models.normalized_document import NormalizedDocument, TextFormat
 from src.adapters.models.raw_document import RawDocument
+from src.adapters.normalizers.code_fence import fence_code
 from src.adapters.normalizers.text_cleanup import clean_text
 from src.ports.normalization_port import NormalizationPort, UnsupportedDocumentError
 
@@ -32,7 +33,6 @@ _HTML_IMAGE = re.compile(r"[ \t]*<img\b[^>]*>", re.IGNORECASE)
 _EMPTY_LINK = re.compile(r"[ \t]*\[\s*\]\([^)]*\)")  # left behind by "[![badge](img)](link)"
 _ATX_H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t#]*$")
 _SETEXT_H1_UNDERLINE = re.compile(r"^ {0,3}=+[ \t]*$")
-_BACKTICK_RUN = re.compile(r"`+")
 
 
 class TextNormalizer(NormalizationPort):
@@ -88,13 +88,8 @@ class TextNormalizer(NormalizationPort):
 # ---------------------------------------------------------------------- #
 
 def _fence_code(code: str, language: str, file_name: str | None) -> str:
-    if not code:
-        return ""
-    # A fence longer than any backtick run in the code can't be closed early.
-    longest = max((len(run) for run in _BACKTICK_RUN.findall(code)), default=0)
-    fence = "`" * max(3, longest + 1)
-    block = f"{fence}{language}\n{code}\n{fence}"
-    return f"{file_name}\n{block}" if file_name else block
+    block = fence_code(code, language)
+    return f"{file_name}\n{block}" if file_name and block else block
 
 
 def _file_name(metadata: dict[str, Any]) -> str | None:
